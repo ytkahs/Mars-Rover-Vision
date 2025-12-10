@@ -12,6 +12,7 @@ import time
 from sklearn.metrics import jaccard_score
 from matplotlib.colors import ListedColormap
 import matplotlib.patches as mpatches
+import segmentation_models_pytorch as smp
 
 class SimpleUNet(nn.Module):
     def __init__(self, n_channels, n_classes):
@@ -122,20 +123,36 @@ class MarsDataset(Dataset):
               mask_tensor = TF.vflip(mask_tensor)
         return image_tensor, mask_tensor
 
+def get_model(model_name, n_classes, device):
+    if model_name == "simple":
+        return SimpleUNet(n_channels=1, n_classes=n_classes).to(device)
+    
+    elif model_name == "resnet34":
+        model = smp.Unet(
+            encoder_name="resnet34",
+            encoder_weights="imagenet",
+            in_channels=1,
+            classes=n_classes
+        )
+        return model.to(device)
+    else:
+        raise ValueError(f"Error with : {model_name}")
+    
 def train_model(dataloader, cfg):
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"processor for training: {device}")
 
-    checkpoint_idx= cfg("checkpoint_idx")
+    checkpoint_idx= cfg["checkpoint_idx"]
+    model_type = cfg["model_type"]
     num_classes = 4 # 0:soil, 1:bedrock, 2:sand 3:big rock
-    lr = cfg("learning_rate")
-    epochs = cfg("epochs")
+    lr = cfg["learning_rate"]
+    epochs = cfg["epochs"]
 
     checkpoint_dir = "checkpoint_dir"
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    model = SimpleUNet(n_channels=1, n_classes=num_classes).to(device)
+    model = get_model(model_type, num_classes, device)
 
     start_epoch = 0    
     if checkpoint_idx is not None:
@@ -181,12 +198,13 @@ def train_model(dataloader, cfg):
         secondes = end_time % 60
         print(f"Epoch {epoch+1}/{epochs} - Loss: {running_loss/len(dataloader):.4f} - Time: {minutes} min {secondes:.2f} s")
 
-def evaluate_checkpoints(test_dataloader, checkpoint_idx=None):
+def evaluate_checkpoints(test_dataloader, cfg, checkpoint_idx=None):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"processor for evalutation: {device}")
 
     results = []
     num_classes = 4
+    model_type = cfg["model_type"]
     checkpoint_dir = "checkpoint_dir"
 
     files_to_test = []
@@ -197,7 +215,7 @@ def evaluate_checkpoints(test_dataloader, checkpoint_idx=None):
         filename = f"ckp_{checkpoint_idx}.pth"
         files_to_test = [filename]
 
-    model = SimpleUNet(n_channels=1, n_classes=num_classes).to(device)
+    model = get_model(model_type, num_classes, device)
     criterion = nn.CrossEntropyLoss()
 
     for ckp_name in files_to_test:
@@ -290,7 +308,7 @@ def visualize_result(model, test_dataset, device, image_index=None):
     colors = ['#bdc3c7', '#2980b9', '#f1c40f', '#c0392b'] # Gray, Blue, Yellow, Red
     cmap = ListedColormap(colors)
 
-    class_names = ['Soil', 'Bedrock', 'Sable', 'Gros Rochers']
+    class_names = ['Soil', 'Bedrock', 'Sand', 'Big Rocks']
 
     if image_index is None:
         image_index = np.random.randint(len(test_dataset))
